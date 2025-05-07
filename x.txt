@@ -1,0 +1,107 @@
+    def select_key_frames(self, frames_buffer, landmarks_buffer, movement_values):
+        #"""Selecciona frames clave combinando el análisis de movimiento y atención"""
+        # Extraer características de los landmarks
+        valid_landmarks = [landmarks for landmarks in landmarks_buffer if landmarks is not None]
+        valid_indices = [i for i, landmarks in enumerate(landmarks_buffer) if landmarks is not None]
+        feature_sequence = [self.extract_features_from_landmarks(landmarks) for landmarks in valid_landmarks]    
+
+        
+        if len(feature_sequence) < 2:
+            return []
+            
+        # Calcular scores de importancia usando self-attention (fórmulas del paper)
+        importance_scores = self.compute_importance_score(feature_sequence)
+        
+        # Combinar con información de movimiento
+        start_indices = []
+        for i in range(1, len(movement_values) - 1):
+        # Detectar inicio de movimiento O pico de movimiento
+            if ((movement_values[i] > MOVEMENT_THRESHOLD and movement_values[i] > movement_values[i-1] * 1.2) or
+                (movement_values[i] > movement_values[i-1] and movement_values[i] > movement_values[i+1])):
+                start_indices.append(i)
+    
+    # Si no encontramos puntos por movimiento, usar los frames con mayor importancia
+        if not start_indices and len(importance_scores) > 0:
+        # Combinar índices con sus puntuaciones
+            scores_with_idx = list(zip(valid_indices, importance_scores))
+        # Ordenar por puntuación de mayor a menor
+            scores_with_idx.sort(key=lambda x: x[1], reverse=True)
+        # Tomar los top 3 frames más importantes (o menos si no hay suficientes)
+            num_frames = min(3, len(scores_with_idx))
+            start_indices = [idx for idx, _ in scores_with_idx[:num_frames]]
+        # Ordenar por posición temporal
+            start_indices.sort()
+    
+        if not start_indices:
+            return []
+    
+    # Capturar secuencias desde cada punto de inicio y combinarlas
+        key_frames = []
+        for start_idx in start_indices:
+            if start_idx < len(frames_buffer) - 1:  # Asegurar que hay al menos 2 frames disponibles
+            # Calcular una longitud de secuencia variable según la importancia del movimiento
+                importance = movement_values[start_idx] if start_idx < len(movement_values) else MOVEMENT_THRESHOLD
+            # Más movimiento = secuencia más larga
+                seq_length = min(max(2, int(importance / MOVEMENT_THRESHOLD * 3)), 5)
+                seq_length = min(seq_length, len(frames_buffer) - start_idx)  # No exceder el buffer
+            
+            # Añadir los frames de esta secuencia
+                for j in range(seq_length):
+                    if start_idx + j < len(frames_buffer):
+                        key_frames.append(frames_buffer[start_idx + j])
+    
+        return key_frames
+
+
+
+
+
+
+
+
+    def select_key_frames(self, frames_buffer, landmarks_buffer, movement_values):
+    #"""Selecciona keyframes de manera más estable y predecible"""
+    # Extraer características de los landmarks
+        feature_sequence = [self.extract_features_from_landmarks(landmarks) 
+                       for landmarks in landmarks_buffer if landmarks is not None]
+    
+        if len(feature_sequence) < 2:
+            return []
+    
+    # Calcular scores de importancia
+        importance_scores = self.compute_importance_score(feature_sequence)
+    
+    # Combinar con información de movimiento
+        combined_scores = []
+        valid_indices = [i for i, landmarks in enumerate(landmarks_buffer) if landmarks is not None]
+    
+        for i, idx in enumerate(valid_indices):
+            if idx < len(movement_values) and i < len(importance_scores):
+            # Combinar score de atención con magnitud de movimiento
+                movement_weight = min(1.0, movement_values[idx] / MOVEMENT_THRESHOLD)
+                combined_score = 0.7 * importance_scores[i] + 0.3 * movement_weight
+                combined_scores.append((idx, combined_score))
+    
+    # Ordenar por índice temporal para mantener el orden cronológico
+        combined_scores.sort(key=lambda x: x[0])
+    
+    # Seleccionar los keyframes manteniendo distancia mínima entre ellos
+        key_frame_indices = []
+        last_selected = -5  # Asegurar distancia mínima entre keyframes
+    
+        for idx, score in combined_scores:
+        # Solo seleccionar si está suficientemente separado del último keyframe
+            if idx - last_selected >= 3 and score > 0.4:  # Umbral mínimo de score
+                key_frame_indices.append(idx)
+                last_selected = idx
+    
+    # Limitar el número total de keyframes para evitar saturación
+        if len(key_frame_indices) > 10:
+        # Reducir a un máximo de 10, manteniendo distribución
+            step = len(key_frame_indices) // 10
+            key_frame_indices = key_frame_indices[::step][:10]
+    
+    # Devolver los frames clave en orden cronológico
+        key_frames = [frames_buffer[idx] for idx in key_frame_indices if idx < len(frames_buffer)]
+    
+        return key_frames
